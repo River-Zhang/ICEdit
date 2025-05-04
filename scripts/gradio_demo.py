@@ -16,28 +16,14 @@ import torch
 import spaces
 import argparse
 import random 
-from diffusers import FluxFillPipeline
 from PIL import Image
 
 MAX_SEED = np.iinfo(np.int32).max
 MAX_IMAGE_SIZE = 1024
 
-
 parser = argparse.ArgumentParser() 
 parser.add_argument("--port", type=int, default=7860, help="Port for the Gradio app")
-parser.add_argument("--output-dir", type=str, default="gradio_results", help="Directory to save the output image")
-parser.add_argument("--flux-path", type=str, default='black-forest-labs/flux.1-fill-dev', help="Path to the model")
-parser.add_argument("--lora-path", type=str, default='sanaka87/ICEdit-MoE-LoRA', help="Path to the LoRA weights")
-parser.add_argument("--enable-model-cpu-offload", action="store_true", help="Enable CPU offloading for the model")
 args = parser.parse_args()
-
-pipe = FluxFillPipeline.from_pretrained(args.flux_path, torch_dtype=torch.bfloat16)
-pipe.load_lora_weights(args.lora_path)
-
-if args.enable_model_cpu_offload:
-    pipe.enable_model_cpu_offload() 
-else:
-    pipe = pipe.to("cuda")
 
 @spaces.GPU
 def infer(edit_images, 
@@ -48,9 +34,21 @@ def infer(edit_images,
           height=1024, 
           guidance_scale=50, 
           num_inference_steps=28, 
+          output_dir="gradio_results", 
+          flux_path='black-forest-labs/flux.1-fill-dev', 
+          lora_path='sanaka87/ICEdit-MoE-LoRA', 
+          enable_model_cpu_offload=False,
           progress=gr.Progress(track_tqdm=True)
 ):
-    
+    # Initialize the pipeline with user-provided model and LoRA paths
+    pipe = FluxFillPipeline.from_pretrained(flux_path, torch_dtype=torch.bfloat16)
+    pipe.load_lora_weights(lora_path)
+
+    if enable_model_cpu_offload:
+        pipe.enable_model_cpu_offload() 
+    else:
+        pipe = pipe.to("cuda")
+
     image = edit_images
         
     if image.size[0] != 512:
@@ -89,10 +87,10 @@ def infer(edit_images,
     w,h = image.size
     image = image.crop((w//2, 0, w, h))
 
-    os.makedirs(args.output_dir, exist_ok=True)
+    os.makedirs(output_dir, exist_ok=True)
         
-    index = len(os.listdir(args.output_dir))
-    image.save(f"{args.output_dir}/result_{index}.png")
+    index = len(os.listdir(output_dir))
+    image.save(f"{output_dir}/result_{index}.png")
     
     return image, seed
     
@@ -169,7 +167,6 @@ More **open-source**, with **lower costs**, **faster speed** (it takes about 9 s
                 )
             
             with gr.Row():
-
                 guidance_scale = gr.Slider(
                     label="Guidance Scale",
                     minimum=1,
@@ -185,12 +182,48 @@ More **open-source**, with **lower costs**, **faster speed** (it takes about 9 s
                     step=1,
                     value=28,
                 )
+            
+            output_dir = gr.Textbox(
+                label="Output Directory",
+                value="gradio_results",
+                placeholder="Enter directory to save output images",
+            )
+            
+            flux_path = gr.Textbox(
+                label="Model Path",
+                value='black-forest-labs/flux.1-fill-dev',
+                placeholder="Enter path to the Flux model",
+            )
+            
+            lora_path = gr.Textbox(
+                label="LoRA Weights Path",
+                value='sanaka87/ICEdit-MoE-LoRA',
+                placeholder="Enter path to the LoRA weights",
+            )
+            
+            enable_model_cpu_offload = gr.Checkbox(
+                label="Enable Model CPU Offload",
+                value=False,
+            )
 
     gr.on(
         triggers=[run_button.click, prompt.submit],
-        fn = infer,
-        inputs = [edit_image, prompt, seed, randomize_seed, width, height, guidance_scale, num_inference_steps],
-        outputs = [result, seed]
+        fn=infer,
+        inputs=[
+            edit_image, 
+            prompt, 
+            seed, 
+            randomize_seed, 
+            width, 
+            height, 
+            guidance_scale, 
+            num_inference_steps, 
+            output_dir, 
+            flux_path, 
+            lora_path, 
+            enable_model_cpu_offload
+        ],
+        outputs=[result, seed]
     )
 
 demo.launch(server_port=args.port)
